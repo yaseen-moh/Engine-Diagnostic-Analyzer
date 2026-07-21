@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Engine Diagnostic Analyzer</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <style>
+        :root { --bg:#0a0e17; --panel:#111827; --border:#1f2937; --text:#e5e7eb; --text-dim:#9ca3af; --accent:#3b82f6; --danger:#ef4444; --warning:#f59e0b; --success:#10b981; --info:#06b6d4; }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family:'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+        header { background:var(--panel); border-bottom:1px solid var(--border); padding:1rem 2rem; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:100; }
+        .logo { display:flex; align-items:center; gap:0.75rem; }
+        .logo-icon { width:36px; height:36px; background:linear-gradient(135deg,var(--accent),var(--info)); border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:1.2rem; }
+        .logo h1 { font-size:1.25rem; font-weight:600; }
+        .logo span { color:var(--text-dim); font-size:0.8rem; }
+        .status-bar { display:flex; align-items:center; gap:1.5rem; }
+        .status-pill { display:flex; align-items:center; gap:0.5rem; padding:0.35rem 0.9rem; border-radius:999px; font-size:0.8rem; font-weight:500; background:var(--border); }
+        .status-pill.active { background:rgba(16,185,129,0.15); color:var(--success); }
+        .status-pill.danger { background:rgba(239,68,68,0.15); color:var(--danger); }
+        .pulse { width:8px; height:8px; border-radius:50%; background:currentColor; animation:pulse 2s infinite; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+        .controls { display:flex; gap:0.5rem; }
+        button { padding:0.5rem 1.2rem; border:1px solid var(--border); border-radius:6px; background:var(--panel); color:var(--text); font-size:0.85rem; font-weight:500; cursor:pointer; transition:all 0.2s; }
+        button:hover { border-color:var(--accent); background:rgba(59,130,246,0.1); }
+        button.primary { background:var(--accent); border-color:var(--accent); color:white; }
+        button.primary:hover { background:#2563eb; }
+        button:disabled { opacity:0.5; cursor:not-allowed; }
+        main { padding:1.5rem 2rem; display:grid; grid-template-columns:1fr 380px; gap:1.5rem; max-width:1600px; margin:0 auto; }
+        .panel { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:1.25rem; }
+        .panel h2 { font-size:0.9rem; font-weight:600; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:1rem; display:flex; align-items:center; gap:0.5rem; }
+        .sensor-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:0.75rem; }
+        .sensor-card { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:0.875rem; transition:all 0.3s; position:relative; overflow:hidden; }
+        .sensor-card::before { content:""; position:absolute; top:0; left:0; right:0; height:2px; background:var(--accent); opacity:0; transition:opacity 0.3s; }
+        .sensor-card.updated::before { opacity:1; animation:flash 0.5s ease-out; }
+        @keyframes flash { 0%{opacity:1} 100%{opacity:0} }
+        .sensor-card.alert::before { background:var(--danger); opacity:1; }
+        .sensor-card.warning::before { background:var(--warning); opacity:1; }
+        .sensor-name { font-size:0.7rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:0.25rem; }
+        .sensor-value { font-size:1.5rem; font-weight:700; font-variant-numeric:tabular-nums; }
+        .sensor-unit { font-size:0.75rem; color:var(--text-dim); margin-left:0.25rem; }
+        .charts-row { display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-top:1rem; }
+        .chart-container { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:0.75rem; height:280px; }
+        .alerts-panel { max-height:calc(100vh - 200px); overflow-y:auto; }
+        .alert-item { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:1rem; margin-bottom:0.75rem; border-left:3px solid var(--border); animation:slideIn 0.4s ease-out; }
+        @keyframes slideIn { from{opacity:0;transform:translateX(20px)} to{opacity:1;transform:translateX(0)} }
+        .alert-item.critical,.alert-item.high { border-left-color:var(--danger); }
+        .alert-item.medium { border-left-color:var(--warning); }
+        .alert-item.low { border-left-color:var(--info); }
+        .alert-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:0.5rem; }
+        .alert-title { font-weight:600; font-size:0.9rem; }
+        .alert-confidence { font-size:0.75rem; padding:0.15rem 0.5rem; border-radius:4px; font-weight:600; }
+        .alert-confidence.high { background:rgba(239,68,68,0.15); color:var(--danger); }
+        .alert-confidence.medium { background:rgba(245,158,11,0.15); color:var(--warning); }
+        .alert-confidence.low { background:rgba(6,182,212,0.15); color:var(--info); }
+        .alert-desc { font-size:0.8rem; color:var(--text-dim); line-height:1.5; margin-bottom:0.5rem; }
+        .alert-action { font-size:0.75rem; color:var(--accent); background:rgba(59,130,246,0.08); padding:0.5rem 0.75rem; border-radius:6px; border-left:2px solid var(--accent); }
+        .alert-meta { display:flex; gap:1rem; margin-top:0.5rem; font-size:0.7rem; color:var(--text-dim); }
+        .empty-state { text-align:center; padding:3rem 1rem; color:var(--text-dim); }
+        .failure-library { margin-top:1rem; }
+        .failure-item { display:flex; align-items:center; gap:0.75rem; padding:0.6rem 0.75rem; border-radius:6px; font-size:0.8rem; margin-bottom:0.4rem; background:var(--bg); border:1px solid var(--border); }
+        .failure-severity { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+        .failure-severity.critical,.failure-severity.high { background:var(--danger); }
+        .failure-severity.medium { background:var(--warning); }
+        .failure-severity.low { background:var(--info); }
+        .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.7); display:none; align-items:center; justify-content:center; z-index:200; }
+        .modal-overlay.active { display:flex; }
+        .modal { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:1.5rem; width:90%; max-width:500px; }
+        .modal h3 { margin-bottom:1rem; }
+        .modal input,.modal select { width:100%; padding:0.6rem; margin-bottom:0.75rem; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:0.9rem; }
+        .modal-actions { display:flex; justify-content:flex-end; gap:0.5rem; margin-top:1rem; }
+        @media (max-width:1100px) { main { grid-template-columns:1fr; } .charts-row { grid-template-columns:1fr; } }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo">
+            <div class="logo-icon">🔧</div>
+            <div><h1>Engine Diagnostic Analyzer</h1><span>Predictive Failure Detection from OBD-II Data</span></div>
+        </div>
+        <div class="status-bar">
+            <div class="status-pill" id="connectionStatus"><span class="pulse"></span><span>Disconnected</span></div>
+            <div class="status-pill" id="alertStatus"><span>No Alerts</span></div>
+            <div class="controls">
+                <button onclick="showStartModal()">▶ Start Stream</button>
+                <button onclick="stopStream()">⏹ Stop</button>
+            </div>
+        </div>
+    </header>
+    <main>
+        <div class="left-col">
+            <div class="panel"><h2>📊 Live Sensors</h2><div class="sensor-grid" id="sensorGrid"></div></div>
+            <div class="panel" style="margin-top:1rem">
+                <h2>📈 Trend Analysis</h2>
+                <div class="charts-row"><div class="chart-container" id="chartTemp"></div><div class="chart-container" id="chartVoltage"></div></div>
+                <div class="charts-row" style="margin-top:1rem"><div class="chart-container" id="chartRPM"></div><div class="chart-container" id="chartMAP"></div></div>
+            </div>
+        </div>
+        <div class="right-col">
+            <div class="panel alerts-panel">
+                <h2>🚨 Active Alerts</h2>
+                <div id="alertsContainer">
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48" style="opacity:0.3;margin-bottom:1rem"><path d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                        <p>No failure predictions yet</p><p style="font-size:0.8rem;margin-top:0.5rem">Start streaming to begin analysis</p>
+                    </div>
+                </div>
+            </div>
+            <div class="panel" style="margin-top:1rem"><h2>📚 Failure Mode Library</h2><div class="failure-library" id="failureLibrary"></div></div>
+        </div>
+    </main>
+    <div class="modal-overlay" id="startModal">
+        <div class="modal">
+            <h3>Start Data Stream</h3>
+            <input type="text" id="vehicleId" placeholder="Vehicle ID" value="demo-vehicle">
+            <select id="streamMode"><option value="simulate">Simulation Mode</option><option value="live">Live OBD-II</option></select>
+            <div class="modal-actions"><button onclick="hideStartModal()">Cancel</button><button class="primary" onclick="startStream()">Start Streaming</button></div>
+        </div>
+    </div>
+    <script>
+        const socket = io(window.location.origin, {transports:['websocket','polling'],reconnection:true,reconnectionAttempts:5,reconnectionDelay:1000});
+        let alertCount = 0;
+        const chartLayout = {paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',font:{color:'#9ca3af',size:10},margin:{t:20,r:20,b:30,l:40},xaxis:{gridcolor:'#1f2937',showgrid:true},yaxis:{gridcolor:'#1f2937',showgrid:true},showlegend:false};
+        const chartConfig = {displayModeBar:false,responsive:true};
+        Plotly.newPlot('chartTemp', [{x:[],y:[],mode:'lines',line:{color:'#ef4444',width:2},fill:'tozeroy',fillcolor:'rgba(239,68,68,0.1)'}], {...chartLayout,title:{text:'Coolant Temp (°C)',font:{size:12,color:'#e5e7eb'}}}, chartConfig);
+        Plotly.newPlot('chartVoltage', [{x:[],y:[],mode:'lines',line:{color:'#f59e0b',width:2},fill:'tozeroy',fillcolor:'rgba(245,158,11,0.1)'}], {...chartLayout,title:{text:'Module Voltage (V)',font:{size:12,color:'#e5e7eb'}}}, chartConfig);
+        Plotly.newPlot('chartRPM', [{x:[],y:[],mode:'lines',line:{color:'#3b82f6',width:2},fill:'tozeroy',fillcolor:'rgba(59,130,246,0.1)'}], {...chartLayout,title:{text:'Engine RPM',font:{size:12,color:'#e5e7eb'}}}, chartConfig);
+        Plotly.newPlot('chartMAP', [{x:[],y:[],mode:'lines',line:{color:'#10b981',width:2},fill:'tozeroy',fillcolor:'rgba(16,185,129,0.1)'}], {...chartLayout,title:{text:'MAP (kPa)',font:{size:12,color:'#e5e7eb'}}}, chartConfig);
+        socket.on('connect', () => console.log('Connected to server'));
+        socket.on('connect_error', (err) => { console.error('Socket error:', err.message); document.getElementById('connectionStatus').innerHTML = '<span style="color:#ef4444">⚠ Server Error</span>'; });
+        socket.on('init', (data) => { initSensorGrid(data.sensors); loadFailureLibrary(); });
+        socket.on('stream_status', (data) => { const s = document.getElementById('connectionStatus'); if(data.status==='started'){s.className='status-pill active';s.innerHTML='<span class="pulse"></span><span>Streaming: '+data.vehicle_id+'</span>';}else if(data.status==='stopped'){s.className='status-pill';s.innerHTML='<span class="pulse"></span><span>Disconnected</span>';} });
+        socket.on('sensor_update', (data) => { updateSensors(data.readings); updateCharts(data.history); });
+        socket.on('new_alert', (alert) => { addAlert(alert); alertCount++; updateAlertStatus(); });
+        function initSensorGrid(sensors) { const grid = document.getElementById('sensorGrid'); grid.innerHTML = ''; sensors.forEach(sensor => { const card = document.createElement('div'); card.className = 'sensor-card'; card.id = 'card-' + sensor; card.innerHTML = `<div class="sensor-name">${sensor.replace(/_/g,' ')}</div><div class="sensor-value">--<span class="sensor-unit"></span></div>`; grid.appendChild(card); }); }
+        function updateSensors(readings) { for(const[sensor,data] of Object.entries(readings)){const card=document.getElementById('card-'+sensor);if(!card)continue;const valueEl=card.querySelector('.sensor-value');const unitEl=card.querySelector('.sensor-unit');valueEl.childNodes[0].textContent=data.value.toFixed(1);unitEl.textContent=data.unit||'';card.classList.add('updated');setTimeout(()=>card.classList.remove('updated'),500);} }
+        function updateCharts(history) { const sensors=['COOLANT_TEMP','CONTROL_MODULE_VOLTAGE','RPM','MAP'];const charts=['chartTemp','chartVoltage','chartRPM','chartMAP'];sensors.forEach((sensor,i)=>{if(history[sensor]&&history[sensor].length>0){const x=history[sensor].map(d=>d.x);const y=history[sensor].map(d=>d.y);Plotly.update(charts[i],{x:[x],y:[y]});}}); }
+        function addAlert(alert) { const container = document.getElementById('alertsContainer'); if(container.querySelector('.empty-state')) container.innerHTML = ''; const item = document.createElement('div'); item.className = 'alert-item ' + alert.severity; const confClass = alert.confidence > 0.70 ? 'high' : (alert.confidence > 0.45 ? 'medium' : 'low'); item.innerHTML = `<div class="alert-header"><div class="alert-title">${alert.failure_name}</div><div class="alert-confidence ${confClass}">${(alert.confidence*100).toFixed(0)}%</div></div><div class="alert-desc">${alert.description}</div><div class="alert-action">🔧 ${alert.action}</div><div class="alert-meta"><span>⏱ ${alert.timestamp}</span><span>📡 ${alert.sensors.join(', ')}</span></div>`; container.insertBefore(item, container.firstChild); alert.sensors.forEach(sensor => { const card = document.getElementById('card-' + sensor); if(card){card.classList.add(alert.severity==='critical'||alert.severity==='high'?'alert':'warning');setTimeout(()=>card.classList.remove('alert','warning'),5000);} }); }
+        function updateAlertStatus() { const status = document.getElementById('alertStatus'); if(alertCount===0){status.className='status-pill';status.innerHTML='<span>No Alerts</span>';}else{status.className='status-pill danger';status.innerHTML='<span class="pulse"></span><span>'+alertCount+' Alert'+(alertCount>1?'s':'')+'</span>';} }
+        async function loadFailureLibrary() { try { const res = await fetch('/api/failure-modes'); const modes = await res.json(); const container = document.getElementById('failureLibrary'); modes.forEach(mode => { const item = document.createElement('div'); item.className = 'failure-item'; item.innerHTML = `<div class="failure-severity ${mode.severity}"></div><div style="flex:1"><div style="font-weight:600">${mode.name}</div><div style="font-size:0.7rem;color:#9ca3af;margin-top:2px">${mode.dtcs.join(', ')||'No DTCs'}</div></div>`; container.appendChild(item); }); } catch(e) { console.error('Failed to load failure modes:', e); } }
+        function showStartModal() { document.getElementById('startModal').classList.add('active'); }
+        function hideStartModal() { document.getElementById('startModal').classList.remove('active'); }
+        function startStream() { const vehicleId = document.getElementById('vehicleId').value; const mode = document.getElementById('streamMode').value; socket.emit('start_stream', {vehicle_id: vehicleId, mode: mode}); hideStartModal(); }
+        function stopStream() { socket.emit('stop_stream'); alertCount = 0; updateAlertStatus(); document.getElementById('alertsContainer').innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48" style="opacity:0.3;margin-bottom:1rem"><path d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg><p>Stream stopped</p></div>'; }
+        document.getElementById('startModal').addEventListener('click', (e) => { if(e.target === e.currentTarget) hideStartModal(); });
+    </script>
+</body>
+</html>
