@@ -1,0 +1,941 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Engine Diagnostic Analyzer</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #000;
+            color: #fff;
+            min-height: 100vh;
+            line-height: 1.5;
+        }
+        header {
+            background: #111;
+            border-bottom: 1px solid #333;
+            padding: 1rem 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+        .logo h1 { font-size: 1.25rem; font-weight: 600; letter-spacing: -0.02em; }
+        .logo span { color: #888; font-size: 0.8rem; font-weight: 400; }
+        .status-bar { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+        .status-pill {
+            display: flex; align-items: center; gap: 0.5rem;
+            padding: 0.35rem 0.9rem; border-radius: 4px;
+            font-size: 0.8rem; font-weight: 500;
+            background: #222; border: 1px solid #333;
+        }
+        .status-pill.active { background: #0a2a0a; border-color: #2a5a2a; color: #4caf50; }
+        .status-pill.warning { background: #2a2a0a; border-color: #5a5a2a; color: #ff9800; }
+        .status-pill.danger { background: #2a0a0a; border-color: #5a2a2a; color: #f44336; }
+        .pulse { width: 8px; height: 8px; border-radius: 50%; background: currentColor; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        .controls { display: flex; gap: 0.5rem; }
+        button {
+            padding: 0.5rem 1.2rem; border: 1px solid #444; border-radius: 4px;
+            background: #1a1a1a; color: #fff; font-size: 0.85rem; font-weight: 500;
+            cursor: pointer; transition: all 0.15s;
+        }
+        button:hover { border-color: #666; background: #222; }
+        button.primary { background: #fff; border-color: #fff; color: #000; }
+        button.primary:hover { background: #ddd; }
+        button:disabled { opacity: 0.4; cursor: not-allowed; }
+        main {
+            padding: 1.5rem 2rem;
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            gap: 1.5rem;
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+        .panel {
+            background: #111;
+            border: 1px solid #222;
+            border-radius: 4px;
+            padding: 1.25rem;
+        }
+        .panel h2 {
+            font-size: 0.75rem; font-weight: 600; color: #888;
+            text-transform: uppercase; letter-spacing: 0.08em;
+            margin-bottom: 1rem;
+        }
+        .sensor-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 0.75rem;
+        }
+        .sensor-card {
+            background: #0a0a0a; border: 1px solid #222; border-radius: 4px;
+            padding: 0.875rem; transition: border-color 0.2s;
+        }
+        .sensor-card:hover { border-color: #444; }
+        .sensor-card.alert { border-color: #f44336; }
+        .sensor-card.warning { border-color: #ff9800; }
+        .sensor-name {
+            font-size: 0.65rem; color: #666;
+            text-transform: uppercase; letter-spacing: 0.08em;
+            margin-bottom: 0.25rem;
+        }
+        .sensor-value {
+            font-size: 1.3rem; font-weight: 600;
+            font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+        }
+        .sensor-unit { font-size: 0.7rem; color: #666; margin-left: 0.25rem; font-weight: 400; }
+        .charts-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+        .chart-container {
+            background: #0a0a0a; border: 1px solid #222;
+            border-radius: 4px; padding: 0.75rem; height: 240px;
+        }
+        .alerts-panel { max-height: calc(100vh - 200px); overflow-y: auto; }
+        .alert-item {
+            background: #0a0a0a; border: 1px solid #222; border-radius: 4px;
+            padding: 1rem; margin-bottom: 0.75rem;
+            border-left: 3px solid #333;
+            animation: slideIn 0.3s ease-out;
+        }
+        @keyframes slideIn { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: translateX(0); } }
+        .alert-item.critical { border-left-color: #f44336; }
+        .alert-item.high { border-left-color: #f44336; }
+        .alert-item.medium { border-left-color: #ff9800; }
+        .alert-item.low { border-left-color: #2196f3; }
+        .alert-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem; }
+        .alert-title { font-weight: 600; font-size: 0.9rem; }
+        .alert-confidence {
+            font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 3px;
+            font-weight: 600; background: #222;
+        }
+        .alert-confidence.high { background: #2a0a0a; color: #f44336; }
+        .alert-confidence.medium { background: #2a1a0a; color: #ff9800; }
+        .alert-confidence.low { background: #0a1a2a; color: #2196f3; }
+        .alert-desc { font-size: 0.8rem; color: #888; line-height: 1.5; margin-bottom: 0.5rem; }
+        .alert-action { font-size: 0.75rem; color: #aaa; background: #151515; padding: 0.5rem 0.75rem; border-radius: 3px; border-left: 2px solid #444; }
+        .alert-meta { display: flex; gap: 1rem; margin-top: 0.5rem; font-size: 0.7rem; color: #666; }
+        .empty-state { text-align: center; padding: 3rem 1rem; color: #555; font-size: 0.9rem; }
+        .log-panel {
+            margin-top: 1rem;
+            font-family: 'SF Mono', 'Consolas', monospace;
+            font-size: 0.75rem; color: #666;
+            max-height: 120px; overflow-y: auto;
+        }
+        .log-entry { padding: 0.1rem 0; border-bottom: 1px solid #1a1a1a; }
+        .log-entry.error { color: #f44336; }
+        .log-entry.warn { color: #ff9800; }
+        .log-entry.info { color: #888; }
+        .log-entry.success { color: #4caf50; }
+        .failure-library { margin-top: 1rem; }
+        .failure-item {
+            display: flex; align-items: center; gap: 0.75rem;
+            padding: 0.5rem 0.75rem; border-radius: 3px;
+            font-size: 0.8rem; margin-bottom: 0.3rem;
+            background: #0a0a0a; border: 1px solid #222;
+        }
+        .failure-severity { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+        .failure-severity.critical { background: #f44336; }
+        .failure-severity.high { background: #f44336; }
+        .failure-severity.medium { background: #ff9800; }
+        .failure-severity.low { background: #2196f3; }
+        .modal-overlay {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.85);
+            display: none; align-items: center; justify-content: center;
+            z-index: 200;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal {
+            background: #111; border: 1px solid #333; border-radius: 4px;
+            padding: 1.5rem; width: 90%; max-width: 420px;
+        }
+        .modal h3 { margin-bottom: 1rem; font-size: 1rem; }
+        .modal label { display: block; font-size: 0.8rem; color: #888; margin-bottom: 0.25rem; margin-top: 0.75rem; }
+        .modal input, .modal select {
+            width: 100%; padding: 0.6rem; background: #0a0a0a;
+            border: 1px solid #333; border-radius: 4px;
+            color: #fff; font-size: 0.9rem;
+        }
+        .modal input:focus, .modal select:focus { outline: none; border-color: #666; }
+        .modal-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1.5rem; }
+        .port-list { margin-top: 0.5rem; font-size: 0.75rem; color: #555; }
+        .port-list code { background: #1a1a1a; padding: 0.1rem 0.3rem; border-radius: 2px; color: #888; }
+        @media (max-width: 1100px) {
+            main { grid-template-columns: 1fr; }
+            .charts-row { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo">
+            <div>
+                <h1>Engine Diagnostic Analyzer</h1>
+                <span>Predictive Failure Detection from OBD-II Data</span>
+            </div>
+        </div>
+        <div class="status-bar">
+            <div class="status-pill" id="connectionStatus">
+                <span class="pulse"></span>
+                <span>Ready</span>
+            </div>
+            <div class="status-pill" id="alertStatus">
+                <span>No Alerts</span>
+            </div>
+            <div class="controls">
+                <button class="primary" id="startBtn" onclick="showStartModal()">Start</button>
+                <button id="stopBtn" onclick="stopAll()" disabled>Stop</button>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <div class="left-col">
+            <div class="panel">
+                <h2>Live Sensors</h2>
+                <div class="sensor-grid" id="sensorGrid"></div>
+            </div>
+            <div class="panel" style="margin-top: 1rem;">
+                <h2>Trend Analysis</h2>
+                <div class="charts-row">
+                    <div class="chart-container" id="chartTemp"></div>
+                    <div class="chart-container" id="chartVoltage"></div>
+                </div>
+                <div class="charts-row" style="margin-top: 1rem;">
+                    <div class="chart-container" id="chartRPM"></div>
+                    <div class="chart-container" id="chartMAP"></div>
+                </div>
+            </div>
+            <div class="panel" style="margin-top: 1rem;">
+                <h2>System Log</h2>
+                <div class="log-panel" id="logPanel">
+                    <div class="log-entry info">System initialized. Select mode to begin.</div>
+                </div>
+            </div>
+        </div>
+        <div class="right-col">
+            <div class="panel alerts-panel">
+                <h2>Active Alerts</h2>
+                <div id="alertsContainer">
+                    <div class="empty-state">
+                        <p>No failure predictions yet</p>
+                        <p style="font-size: 0.8rem; margin-top: 0.5rem; color: #444;">Start simulation or connect to OBD-II to begin analysis</p>
+                    </div>
+                </div>
+            </div>
+            <div class="panel" style="margin-top: 1rem;">
+                <h2>Failure Mode Library</h2>
+                <div id="failureLibrary"></div>
+            </div>
+        </div>
+    </main>
+
+    <div class="modal-overlay" id="startModal">
+        <div class="modal">
+            <h3>Start Data Stream</h3>
+            <label>Mode</label>
+            <select id="streamMode" onchange="onModeChange()">
+                <option value="simulate">Simulation (no hardware)</option>
+                <option value="live">Live OBD-II (requires ELM327 adapter)</option>
+            </select>
+            <label>Vehicle ID</label>
+            <input type="text" id="vehicleId" value="demo-vehicle" placeholder="e.g. honda-civic-2019">
+            <div id="portSection" style="display:none;">
+                <label>Serial Port</label>
+                <input type="text" id="serialPort" value="auto" placeholder="auto, COM3, /dev/ttyUSB0">
+                <div class="port-list">
+                    Common ports: <code>auto</code> <code>COM3</code> <code>COM4</code> <code>/dev/ttyUSB0</code> <code>/dev/rfcomm0</code>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button onclick="hideStartModal()">Cancel</button>
+                <button class="primary" onclick="startStream()">Start Streaming</button>
+            </div>
+        </div>
+    </div>
+
+<script>
+// ===================== CONFIG =====================
+const SENSOR_RATES = {
+    "RPM": 10, "COOLANT_TEMP": 2, "INTAKE_TEMP": 2, "MAF": 5,
+    "THROTTLE_POS": 5, "ENGINE_LOAD": 5, "TIMING_ADVANCE": 5,
+    "O2_B1S1": 2, "O2_B1S2": 2, "SHORT_FUEL_TRIM_1": 2,
+    "LONG_FUEL_TRIM_1": 1, "MAP": 5, "BAROMETRIC_PRESSURE": 1,
+    "SPEED": 5, "RUN_TIME": 1, "DISTANCE_W_MIL": 1,
+    "CONTROL_MODULE_VOLTAGE": 5
+};
+const SENSOR_UNITS = {
+    "RPM": "rpm", "COOLANT_TEMP": "C", "INTAKE_TEMP": "C", "MAF": "g/s",
+    "THROTTLE_POS": "%", "ENGINE_LOAD": "%", "TIMING_ADVANCE": "deg",
+    "O2_B1S1": "V", "O2_B1S2": "V", "SHORT_FUEL_TRIM_1": "%",
+    "LONG_FUEL_TRIM_1": "%", "MAP": "kPa", "BAROMETRIC_PRESSURE": "kPa",
+    "SPEED": "km/h", "RUN_TIME": "s", "DISTANCE_W_MIL": "km",
+    "CONTROL_MODULE_VOLTAGE": "V"
+};
+const TREND = { RISING: "rising", FALLING: "falling", JITTER: "jitter", STABLE: "stable", OSCILLATING: "oscillating" };
+const SEVERITY = { LOW: "low", MEDIUM: "medium", HIGH: "high", CRITICAL: "critical" };
+
+const FAILURE_MODES = [
+    {
+        id: "WATER_PUMP_BEARING",
+        name: "Water Pump Bearing Failure",
+        description: "Bearing in water pump is degrading, causing increased mechanical drag and reduced coolant circulation. Classic signature: coolant temp rising while voltage drops and idle RPM becomes unstable.",
+        signatures: [
+            [{ sensor: "COOLANT_TEMP", trend: TREND.RISING, rateOfChange: 0.03 }, { sensor: "CONTROL_MODULE_VOLTAGE", trend: TREND.FALLING, rateOfChange: -0.002 }, { sensor: "RPM", trend: TREND.JITTER, varianceThreshold: 50 }],
+            [{ sensor: "COOLANT_TEMP", trend: TREND.RISING, threshold: 105 }, { sensor: "CONTROL_MODULE_VOLTAGE", trend: TREND.FALLING, threshold: 13.5 }]
+        ],
+        confidenceWeights: { "COOLANT_TEMP": 0.35, "CONTROL_MODULE_VOLTAGE": 0.30, "RPM": 0.20, "ENGINE_LOAD": 0.15 },
+        severity: SEVERITY.HIGH,
+        typicalRepair: "Replace water pump assembly. Check drive belt tension. Inspect coolant for bearing debris.",
+        earlyWarningSeconds: 300,
+        relatedDTCs: ["P0118", "P0480", "P0217"]
+    },
+    {
+        id: "CAT_DEGRADATION",
+        name: "Catalytic Converter Efficiency Loss",
+        description: "Catalyst efficiency below threshold. O2 sensors upstream and downstream begin to mirror each other instead of showing the expected lag.",
+        signatures: [[{ sensor: "O2_B1S1", trend: TREND.OSCILLATING }, { sensor: "O2_B1S2", trend: TREND.OSCILLATING }, { sensor: "SHORT_FUEL_TRIM_1", trend: TREND.RISING, threshold: 8 }, { sensor: "LONG_FUEL_TRIM_1", trend: TREND.RISING, threshold: 5 }]],
+        confidenceWeights: { "O2_B1S1": 0.25, "O2_B1S2": 0.25, "SHORT_FUEL_TRIM_1": 0.25, "LONG_FUEL_TRIM_1": 0.25 },
+        severity: SEVERITY.MEDIUM,
+        typicalRepair: "Replace catalytic converter. Check for upstream misfires that poisoned catalyst.",
+        earlyWarningSeconds: 1800,
+        relatedDTCs: ["P0420", "P0430", "P2096"]
+    },
+    {
+        id: "INTAKE_LEAK",
+        name: "Intake Manifold Vacuum Leak",
+        description: "Unmetered air entering intake after MAF sensor. MAP pressure oscillates at idle, fuel trims go lean, and random misfires appear.",
+        signatures: [[{ sensor: "MAP", trend: TREND.OSCILLATING, varianceThreshold: 3 }, { sensor: "SHORT_FUEL_TRIM_1", trend: TREND.RISING, threshold: 5 }, { sensor: "RPM", trend: TREND.JITTER, varianceThreshold: 30 }, { sensor: "THROTTLE_POS", trend: TREND.STABLE }]],
+        confidenceWeights: { "MAP": 0.30, "SHORT_FUEL_TRIM_1": 0.30, "RPM": 0.20, "MAF": 0.20 },
+        severity: SEVERITY.MEDIUM,
+        typicalRepair: "Smoke test intake system. Replace intake manifold gasket. Inspect all vacuum hoses and PCV valve.",
+        earlyWarningSeconds: 600,
+        relatedDTCs: ["P0171", "P0174", "P0300"]
+    },
+    {
+        id: "THROTTLE_CARBON",
+        name: "Throttle Body Carbon Deposits",
+        description: "Carbon buildup on throttle plate restricts airflow at small openings. Throttle position sensor shows micro-jumps, idle RPM hunts.",
+        signatures: [[{ sensor: "THROTTLE_POS", trend: TREND.JITTER, varianceThreshold: 0.5 }, { sensor: "RPM", trend: TREND.OSCILLATING }, { sensor: "ENGINE_LOAD", trend: TREND.JITTER, varianceThreshold: 5 }]],
+        confidenceWeights: { "THROTTLE_POS": 0.40, "RPM": 0.30, "ENGINE_LOAD": 0.30 },
+        severity: SEVERITY.LOW,
+        typicalRepair: "Remove throttle body. Clean with throttle body cleaner. Relearn idle position via scan tool.",
+        earlyWarningSeconds: 1200,
+        relatedDTCs: ["P0507", "P2111"]
+    },
+    {
+        id: "ALTERNATOR_DEGRADING",
+        name: "Alternator Output Degradation",
+        description: "Alternator diodes or brushes wearing. Voltage slowly drops under electrical load. Battery may test good but vehicle shows symptoms of weak charging.",
+        signatures: [[{ sensor: "CONTROL_MODULE_VOLTAGE", trend: TREND.FALLING, rateOfChange: -0.005 }, { sensor: "RPM", trend: TREND.STABLE }, { sensor: "ENGINE_LOAD", trend: TREND.RISING }]],
+        confidenceWeights: { "CONTROL_MODULE_VOLTAGE": 0.60, "ENGINE_LOAD": 0.25, "RPM": 0.15 },
+        severity: SEVERITY.HIGH,
+        typicalRepair: "Test alternator output under load. Replace alternator if output < 13.5V at idle with load.",
+        earlyWarningSeconds: 900,
+        relatedDTCs: ["P0562", "P0621"]
+    },
+    {
+        id: "COIL_PACK_INTERMITTENT",
+        name: "Ignition Coil Pack Intermittent Failure",
+        description: "Coil pack producing weak spark under heat/load. Causes intermittent misfires that may not set DTC immediately. RPM shows micro-drop events, O2 sensor spikes rich from unburned fuel.",
+        signatures: [[{ sensor: "RPM", trend: TREND.JITTER, varianceThreshold: 40 }, { sensor: "O2_B1S1", trend: TREND.RISING, rateOfChange: 0.1 }, { sensor: "TIMING_ADVANCE", trend: TREND.FALLING }, { sensor: "ENGINE_LOAD", trend: TREND.RISING }]],
+        confidenceWeights: { "RPM": 0.30, "O2_B1S1": 0.25, "TIMING_ADVANCE": 0.25, "ENGINE_LOAD": 0.20 },
+        severity: SEVERITY.HIGH,
+        typicalRepair: "Replace coil pack(s). Inspect spark plugs for carbon tracking. Test coil resistance when hot.",
+        earlyWarningSeconds: 300,
+        relatedDTCs: ["P0300", "P0301", "P0302", "P0303", "P0304"]
+    },
+    {
+        id: "HEAD_GASKET_EARLY",
+        name: "Head Gasket Early Stage Failure",
+        description: "Combustion gases beginning to leak into coolant passages. Coolant temp shows sawtooth pattern (spike then drop). White smoke from exhaust possible.",
+        signatures: [[{ sensor: "COOLANT_TEMP", trend: TREND.OSCILLATING, varianceThreshold: 5 }, { sensor: "O2_B1S1", trend: TREND.FALLING }, { sensor: "MAP", trend: TREND.OSCILLATING }]],
+        confidenceWeights: { "COOLANT_TEMP": 0.40, "O2_B1S1": 0.30, "MAP": 0.20, "CONTROL_MODULE_VOLTAGE": 0.10 },
+        severity: SEVERITY.CRITICAL,
+        typicalRepair: "Block test to confirm. Replace head gasket. Check head for warpage. Inspect for coolant in oil.",
+        earlyWarningSeconds: 600,
+        relatedDTCs: ["P0118", "P0171", "P0300"]
+    }
+];
+
+// ===================== STATE =====================
+let simState = { rpm: 750, coolantTemp: 90, voltage: 14.2, throttle: 0, maf: 2.5, map: 35, engineLoad: 15, o2b1s1: 0.45, shortTrim: 0, longTrim: 0, speed: 0, runTime: 0, intakeTemp: 35, timing: 5, distanceMil: 0, baro: 101.3, trend: "normal", trendTimer: 0 };
+let sensorHistory = {};
+let sensorWindows = {};
+let activeAlerts = [];
+let alertCooldowns = {};
+let isStreaming = false;
+let simInterval = null;
+let chartUpdateInterval = null;
+let tickCount = 0;
+let currentMode = "simulate";
+let ws = null;
+const WINDOW_SIZE = 30;
+const ALERT_COOLDOWN_TICKS = 30;
+
+// ===================== INIT =====================
+function init() {
+    Object.keys(SENSOR_RATES).forEach(s => { sensorHistory[s] = []; sensorWindows[s] = []; });
+    renderSensorGrid();
+    renderFailureLibrary();
+    initCharts();
+    log("System initialized. Select mode to begin.", "info");
+}
+
+function renderSensorGrid() {
+    const grid = document.getElementById("sensorGrid");
+    grid.innerHTML = "";
+    Object.keys(SENSOR_RATES).forEach(sensor => {
+        const card = document.createElement("div");
+        card.className = "sensor-card";
+        card.id = `card-${sensor}`;
+        card.innerHTML = `<div class="sensor-name">${sensor.replace(/_/g, " ")}</div><div class="sensor-value" id="val-${sensor}">--<span class="sensor-unit">${SENSOR_UNITS[sensor]}</span></div>`;
+        grid.appendChild(card);
+    });
+}
+
+function renderFailureLibrary() {
+    const container = document.getElementById("failureLibrary");
+    container.innerHTML = "";
+    FAILURE_MODES.forEach(fm => {
+        const div = document.createElement("div");
+        div.className = "failure-item";
+        div.innerHTML = `<div class="failure-severity ${fm.severity}"></div><div style="flex:1"><div style="font-weight:500">${fm.name}</div><div style="font-size:0.7rem;color:#555;margin-top:2px">${fm.relatedDTCs.join(", ")}</div></div>`;
+        container.appendChild(div);
+    });
+}
+
+function log(msg, level) {
+    const panel = document.getElementById("logPanel");
+    const entry = document.createElement("div");
+    entry.className = `log-entry ${level}`;
+    const time = new Date().toLocaleTimeString();
+    entry.textContent = `[${time}] ${msg}`;
+    panel.insertBefore(entry, panel.firstChild);
+    if (panel.children.length > 50) panel.lastChild.remove();
+}
+
+function updateStatus(type, text) {
+    const el = document.getElementById("connectionStatus");
+    el.className = `status-pill ${type}`;
+    el.innerHTML = `<span class="pulse"></span><span>${text}</span>`;
+}
+
+function updateAlertStatus() {
+    const el = document.getElementById("alertStatus");
+    const critical = document.querySelectorAll(".alert-item.critical, .alert-item.high").length;
+    const medium = document.querySelectorAll(".alert-item.medium").length;
+    if (critical > 0) { el.className = "status-pill danger"; el.innerHTML = `<span>${critical} Critical</span>`; }
+    else if (medium > 0) { el.className = "status-pill warning"; el.innerHTML = `<span>${medium} Warning</span>`; }
+    else if (activeAlerts.length > 0) { el.className = "status-pill active"; el.innerHTML = `<span>${activeAlerts.length} Alert${activeAlerts.length > 1 ? 's' : ''}</span>`; }
+    else { el.className = "status-pill"; el.innerHTML = `<span>No Alerts</span>`; }
+}
+
+// ===================== MODAL =====================
+function showStartModal() {
+    document.getElementById("startModal").classList.add("active");
+}
+function hideStartModal() {
+    document.getElementById("startModal").classList.remove("active");
+}
+function onModeChange() {
+    const mode = document.getElementById("streamMode").value;
+    document.getElementById("portSection").style.display = mode === "live" ? "block" : "none";
+}
+
+// ===================== START STREAM =====================
+function startStream() {
+    const mode = document.getElementById("streamMode").value;
+    const vehicleId = document.getElementById("vehicleId").value || "demo-vehicle";
+    currentMode = mode;
+    hideStartModal();
+
+    if (mode === "simulate") {
+        startSimulation();
+    } else {
+        startLiveConnection(vehicleId);
+    }
+}
+
+function stopAll() {
+    if (currentMode === "simulate") {
+        stopSimulation();
+    } else {
+        stopLiveConnection();
+    }
+}
+
+// ===================== SIMULATION =====================
+function gauss(mean, std) {
+    let u = 0, v = 0;
+    while (u === 0) u = Math.random();
+    while (v === 0) v = Math.random();
+    return mean + std * Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+}
+
+function startSimulation() {
+    if (isStreaming) return;
+    isStreaming = true;
+    tickCount = 0;
+    alertCooldowns = {};
+    activeAlerts = [];
+    simState = { rpm: 750, coolantTemp: 90, voltage: 14.2, throttle: 0, maf: 2.5, map: 35, engineLoad: 15, o2b1s1: 0.45, shortTrim: 0, longTrim: 0, speed: 0, runTime: 0, intakeTemp: 35, timing: 5, distanceMil: 0, baro: 101.3, trend: "normal", trendTimer: 0 };
+    Object.keys(SENSOR_RATES).forEach(s => { sensorHistory[s] = []; sensorWindows[s] = []; });
+    document.getElementById("alertsContainer").innerHTML = `<div class="empty-state"><p>Monitoring active...</p><p style="font-size: 0.8rem; margin-top: 0.5rem; color: #444;">Alerts will appear here when detected</p></div>`;
+    document.getElementById("startBtn").disabled = true;
+    document.getElementById("stopBtn").disabled = false;
+    updateStatus("active", "Simulating");
+    log("Simulation started. Vehicle: demo-vehicle | Mode: simulate", "success");
+    simInterval = setInterval(simulateTick, 100);
+    chartUpdateInterval = setInterval(updateCharts, 500);
+}
+
+function stopSimulation() {
+    isStreaming = false;
+    clearInterval(simInterval);
+    clearInterval(chartUpdateInterval);
+    document.getElementById("startBtn").disabled = false;
+    document.getElementById("stopBtn").disabled = true;
+    updateStatus("", "Stopped");
+    log("Simulation stopped.", "info");
+}
+
+function simulateTick() {
+    const s = simState;
+    s.runTime += 0.1;
+    s.trendTimer += 0.1;
+    tickCount++;
+
+    if (s.trendTimer > 20 && s.trend === "normal") {
+        if (Math.random() < 0.05) { s.trend = "degrading"; log("[SIM] Vehicle entering degraded state (water pump bearing simulation)", "warn"); updateStatus("warning", "Degraded"); }
+    }
+    if (s.trendTimer > 40 && s.trend === "degrading") {
+        if (Math.random() < 0.05) { s.trend = "failing"; log("[SIM] Vehicle entering failing state", "error"); updateStatus("danger", "Failing"); }
+    }
+
+    if (s.trend === "normal") {
+        s.rpm = Math.max(600, Math.min(800, s.rpm + gauss(0, 10)));
+        s.coolantTemp = Math.min(95, s.coolantTemp + 0.01);
+        s.voltage = Math.max(13.8, Math.min(14.6, s.voltage + gauss(0, 0.05)));
+        s.throttle = Math.max(0, Math.min(5, s.throttle + gauss(0, 0.5)));
+        s.map = Math.max(30, Math.min(40, s.map + gauss(0, 1)));
+    } else if (s.trend === "degrading") {
+        s.coolantTemp += 0.05 + gauss(0, 0.1);
+        s.voltage -= 0.002 + gauss(0, 0.02);
+        s.rpm += gauss(0, 25);
+        s.throttle = Math.max(0, s.throttle + gauss(0, 0.3));
+        s.map += gauss(0, 2);
+    } else if (s.trend === "failing") {
+        s.coolantTemp += 0.15 + gauss(0, 0.3);
+        s.voltage -= 0.005 + gauss(0, 0.03);
+        s.rpm += gauss(0, 50);
+        s.throttle = Math.max(0, s.throttle + gauss(0, 1.0));
+        s.maf += gauss(0, 0.3);
+    }
+
+    const readings = {
+        "RPM": s.rpm, "COOLANT_TEMP": s.coolantTemp, "INTAKE_TEMP": s.intakeTemp + gauss(0, 1),
+        "MAF": s.maf + gauss(0, 0.1), "THROTTLE_POS": s.throttle, "ENGINE_LOAD": s.engineLoad + gauss(0, 2),
+        "TIMING_ADVANCE": s.timing + gauss(0, 0.5), "O2_B1S1": s.o2b1s1 + gauss(0, 0.05),
+        "O2_B1S2": s.o2b1s1 + gauss(0, 0.05) + 0.1, "SHORT_FUEL_TRIM_1": s.shortTrim + gauss(0, 1),
+        "LONG_FUEL_TRIM_1": s.longTrim + gauss(0, 0.5), "MAP": s.map, "BAROMETRIC_PRESSURE": s.baro,
+        "SPEED": s.speed, "RUN_TIME": s.runTime, "DISTANCE_W_MIL": s.distanceMil,
+        "CONTROL_MODULE_VOLTAGE": s.voltage
+    };
+
+    const now = Date.now() / 1000;
+    Object.keys(readings).forEach(sensor => {
+        const val = readings[sensor];
+        sensorWindows[sensor].push({ t: now, v: val });
+        if (sensorWindows[sensor].length > WINDOW_SIZE) sensorWindows[sensor].shift();
+        sensorHistory[sensor].push({ x: new Date().toLocaleTimeString(), y: val });
+        if (sensorHistory[sensor].length > 300) sensorHistory[sensor].shift();
+        updateSensorCard(sensor, val);
+    });
+
+    if (tickCount % 5 === 0) evaluateAnomalies();
+}
+
+function updateSensorCard(sensor, value) {
+    const el = document.getElementById(`val-${sensor}`);
+    if (el) el.innerHTML = `${value.toFixed(1)}<span class="sensor-unit">${SENSOR_UNITS[sensor]}</span>`;
+}
+
+// ===================== LIVE OBD-II (WebSerial) =====================
+let serialPort = null;
+let serialReader = null;
+let elm327Buffer = "";
+
+async function startLiveConnection(vehicleId) {
+    const portInput = document.getElementById("serialPort").value || "auto";
+    log("Attempting live OBD-II connection...", "info");
+
+    try {
+        // Request serial port via Web Serial API
+        serialPort = await navigator.serial.requestPort({ filters: [{ usbVendorId: 0x0403 }] });
+        await serialPort.open({ baudRate: 38400 });
+        log("Serial port opened at 38400 baud", "success");
+
+        isStreaming = true;
+        tickCount = 0;
+        alertCooldowns = {};
+        activeAlerts = [];
+        Object.keys(SENSOR_RATES).forEach(s => { sensorHistory[s] = []; sensorWindows[s] = []; });
+        document.getElementById("alertsContainer").innerHTML = `<div class="empty-state"><p>Monitoring active...</p><p style="font-size: 0.8rem; margin-top: 0.5rem; color: #444;">Alerts will appear here when detected</p></div>`;
+        document.getElementById("startBtn").disabled = true;
+        document.getElementById("stopBtn").disabled = false;
+        updateStatus("active", "Live: OBD-II");
+        log(`Live stream started. Vehicle: ${vehicleId} | Port: WebSerial`, "success");
+
+        // Initialize ELM327
+        await elm327Init();
+
+        // Start reading loop
+        readSerialLoop();
+
+        // Start polling sensors
+        chartUpdateInterval = setInterval(updateCharts, 500);
+        startELM327Polling();
+
+    } catch (err) {
+        log(`Failed to open serial port: ${err.message}`, "error");
+        log("Make sure you have an ELM327 USB adapter connected and the browser supports Web Serial API (Chrome/Edge).", "warn");
+        updateStatus("danger", "Connection Failed");
+        document.getElementById("startBtn").disabled = false;
+    }
+}
+
+async function elm327Init() {
+    // Reset and configure ELM327
+    await sendELMCommand("ATZ");      // Reset
+    await delay(1000);
+    await sendELMCommand("ATE0");     // Echo off
+    await sendELMCommand("ATL1");     // Linefeeds on
+    await sendELMCommand("ATH1");     // Headers on
+    await sendELMCommand("ATS0");     // Spaces off
+    await sendELMCommand("ATSP0");    // Auto protocol
+    log("ELM327 initialized", "success");
+}
+
+async function sendELMCommand(cmd) {
+    if (!serialPort || !serialPort.writable) return;
+    const writer = serialPort.writable.getWriter();
+    const encoder = new TextEncoder();
+    await writer.write(encoder.encode(cmd + "\r"));
+    writer.releaseLock();
+}
+
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function readSerialLoop() {
+    while (isStreaming && serialPort && serialPort.readable) {
+        try {
+            const reader = serialPort.readable.getReader();
+            const { value, done } = await reader.read();
+            reader.releaseLock();
+            if (done) break;
+            if (value) {
+                const text = new TextDecoder().decode(value);
+                elm327Buffer += text;
+                processELM327Buffer();
+            }
+        } catch (e) {
+            log(`Serial read error: ${e.message}`, "error");
+            break;
+        }
+    }
+}
+
+function processELM327Buffer() {
+    const lines = elm327Buffer.split("\r");
+    elm327Buffer = lines.pop() || "";
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith("AT") && !trimmed.startsWith("SEARCHING") && trimmed !== ">") {
+            parseOBDResponse(trimmed);
+        }
+    }
+}
+
+// OBD-II PID mapping for Mode 01 (Current Data)
+const PID_MAP = {
+    "0C": "RPM", "05": "COOLANT_TEMP", "0F": "INTAKE_TEMP",
+    "10": "MAF", "11": "THROTTLE_POS", "04": "ENGINE_LOAD",
+    "0E": "TIMING_ADVANCE", "14": "O2_B1S1", "15": "O2_B1S2",
+    "06": "SHORT_FUEL_TRIM_1", "07": "LONG_FUEL_TRIM_1",
+    "0B": "MAP", "33": "BAROMETRIC_PRESSURE", "0D": "SPEED",
+    "1F": "RUN_TIME", "21": "DISTANCE_W_MIL", "42": "CONTROL_MODULE_VOLTAGE"
+};
+
+function parseOBDResponse(hexStr) {
+    // Remove spaces, check for valid response
+    const clean = hexStr.replace(/\s/g, "");
+    if (clean.length < 4) return;
+
+    // Response format: 41PID[DATA] for Mode 01
+    if (!clean.startsWith("41")) return;
+
+    const pid = clean.substring(2, 4);
+    const data = clean.substring(4);
+    const sensorName = PID_MAP[pid];
+    if (!sensorName) return;
+
+    let value = 0;
+    switch (pid) {
+        case "0C": // RPM: (A*256 + B) / 4
+            value = (parseInt(data.substring(0, 2), 16) * 256 + parseInt(data.substring(2, 4), 16)) / 4;
+            break;
+        case "05": // Coolant temp: A - 40
+        case "0F": // Intake temp: A - 40
+            value = parseInt(data.substring(0, 2), 16) - 40;
+            break;
+        case "10": // MAF: (A*256 + B) / 100
+            value = (parseInt(data.substring(0, 2), 16) * 256 + parseInt(data.substring(2, 4), 16)) / 100;
+            break;
+        case "11": // Throttle pos: A * 100/255
+        case "04": // Engine load: A * 100/255
+            value = parseInt(data.substring(0, 2), 16) * 100 / 255;
+            break;
+        case "0E": // Timing advance: (A - 128) / 2
+            value = (parseInt(data.substring(0, 2), 16) - 128) / 2;
+            break;
+        case "14": case "15": // O2 voltage: A / 200
+            value = parseInt(data.substring(0, 2), 16) / 200;
+            break;
+        case "06": case "07": // Fuel trim: (A - 128) * 100/128
+            value = (parseInt(data.substring(0, 2), 16) - 128) * 100 / 128;
+            break;
+        case "0B": // MAP: A
+        case "33": // Baro: A
+            value = parseInt(data.substring(0, 2), 16);
+            break;
+        case "0D": // Speed: A
+            value = parseInt(data.substring(0, 2), 16);
+            break;
+        case "1F": // Run time: A*256 + B
+            value = parseInt(data.substring(0, 2), 16) * 256 + parseInt(data.substring(2, 4), 16);
+            break;
+        case "21": // Distance with MIL: A*256 + B
+            value = parseInt(data.substring(0, 2), 16) * 256 + parseInt(data.substring(2, 4), 16);
+            break;
+        case "42": // Control module voltage: (A*256 + B) / 1000
+            value = (parseInt(data.substring(0, 2), 16) * 256 + parseInt(data.substring(2, 4), 16)) / 1000;
+            break;
+    }
+
+    const now = Date.now() / 1000;
+    sensorWindows[sensorName].push({ t: now, v: value });
+    if (sensorWindows[sensorName].length > WINDOW_SIZE) sensorWindows[sensorName].shift();
+    sensorHistory[sensorName].push({ x: new Date().toLocaleTimeString(), y: value });
+    if (sensorHistory[sensorName].length > 300) sensorHistory[sensorName].shift();
+    updateSensorCard(sensorName, value);
+
+    tickCount++;
+    if (tickCount % 5 === 0) evaluateAnomalies();
+}
+
+function startELM327Polling() {
+    const pids = ["0C", "05", "0F", "10", "11", "04", "0E", "14", "15", "06", "07", "0B", "33", "0D", "1F", "21", "42"];
+    let idx = 0;
+
+    const poll = async () => {
+        if (!isStreaming) return;
+        const pid = pids[idx];
+        await sendELMCommand(`01${pid}`);
+        idx = (idx + 1) % pids.length;
+        setTimeout(poll, 150); // ~6-7 Hz per sensor, don't overwhelm ECU
+    };
+    poll();
+}
+
+async function stopLiveConnection() {
+    isStreaming = false;
+    if (serialPort) {
+        try {
+            await sendELMCommand("ATZ");
+            await delay(500);
+            await serialPort.close();
+            serialPort = null;
+        } catch (e) {
+            log(`Error closing port: ${e.message}`, "warn");
+        }
+    }
+    clearInterval(chartUpdateInterval);
+    document.getElementById("startBtn").disabled = false;
+    document.getElementById("stopBtn").disabled = true;
+    updateStatus("", "Stopped");
+    log("Live connection stopped.", "info");
+}
+
+// ===================== ANOMALY DETECTION =====================
+function getTrend(window) {
+    if (window.length < 5) return null;
+    const vals = window.map(w => w.v);
+    const n = vals.length;
+    const mean = vals.reduce((a,b) => a+b, 0) / n;
+    const variance = vals.reduce((a,b) => a + (b-mean)*(b-mean), 0) / n;
+    const meanVal = Math.abs(mean) > 0.001 ? mean : 0.001;
+    const cv = variance / Math.abs(meanVal);
+
+    let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+    for (let i = 0; i < n; i++) { sumX += i; sumY += vals[i]; sumXY += i * vals[i]; sumX2 += i * i; }
+    const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+
+    let signChanges = 0;
+    for (let i = 1; i < vals.length - 1; i++) {
+        if ((vals[i] - vals[i-1]) * (vals[i+1] - vals[i]) < 0) signChanges++;
+    }
+    const oscillationRatio = signChanges / (vals.length - 1);
+
+    if (oscillationRatio > 0.4 && variance > 1) return TREND.OSCILLATING;
+    if (cv > 0.15 && variance > 10) return TREND.JITTER;
+    if (slope > 0.1) return TREND.RISING;
+    if (slope < -0.1) return TREND.FALLING;
+    return TREND.STABLE;
+}
+
+function getStats(window) {
+    if (window.length < 5) return null;
+    const vals = window.map(w => w.v);
+    const n = vals.length;
+    const mean = vals.reduce((a,b) => a+b, 0) / n;
+    const variance = vals.reduce((a,b) => a + (b-mean)*(b-mean), 0) / n;
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+    for (let i = 0; i < n; i++) { sumX += i; sumY += vals[i]; sumXY += i * vals[i]; sumX2 += i * i; }
+    const roc = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+    return { mean, std: Math.sqrt(variance), min, max, variance, rateOfChange: roc };
+}
+
+function patternMatches(pattern, stats, trend) {
+    if (trend !== pattern.trend) return false;
+    if (pattern.threshold !== undefined) {
+        if (pattern.trend === TREND.RISING && stats.max < pattern.threshold) return false;
+        if (pattern.trend === TREND.FALLING && stats.min > pattern.threshold) return false;
+    }
+    if (pattern.rateOfChange !== undefined) {
+        if (pattern.trend === TREND.RISING && stats.rateOfChange < pattern.rateOfChange) return false;
+        if (pattern.trend === TREND.FALLING && stats.rateOfChange > pattern.rateOfChange) return false;
+    }
+    if (pattern.varianceThreshold !== undefined && stats.variance < pattern.varianceThreshold) return false;
+    return true;
+}
+
+function matchFailureMode(fm) {
+    if (!fm.signatures || fm.signatures.length === 0) return 0;
+    let bestGroupScore = 0;
+    for (const group of fm.signatures) {
+        let groupMatches = 0, groupWeight = 0;
+        for (const pattern of group) {
+            const win = sensorWindows[pattern.sensor];
+            if (!win || win.length < 5) continue;
+            const stats = getStats(win);
+            const currentTrend = getTrend(win);
+            const matched = patternMatches(pattern, stats, currentTrend);
+            const weight = fm.confidenceWeights[pattern.sensor] || 0.1;
+            if (matched) groupMatches += weight;
+            groupWeight += weight;
+        }
+        if (groupWeight > 0) {
+            const score = groupMatches / groupWeight;
+            bestGroupScore = Math.max(bestGroupScore, score);
+        }
+    }
+    return bestGroupScore;
+}
+
+function evaluateAnomalies() {
+    for (const fm of FAILURE_MODES) {
+        if (alertCooldowns[fm.id] && tickCount - alertCooldowns[fm.id] < ALERT_COOLDOWN_TICKS) continue;
+        const confidence = matchFailureMode(fm);
+        if (confidence >= 0.25) {
+            let severity = fm.severity;
+            if (confidence < 0.45) severity = SEVERITY.LOW;
+            else if (confidence < 0.70) severity = SEVERITY.MEDIUM;
+            const snapshot = {};
+            Object.keys(fm.confidenceWeights).forEach(sensor => {
+                const win = sensorWindows[sensor];
+                if (win && win.length > 0) snapshot[sensor] = win[win.length-1].v;
+            });
+            const alert = {
+                timestamp: new Date().toLocaleTimeString(),
+                failureName: fm.name,
+                severity: severity,
+                confidence: Math.round(confidence * 100),
+                description: fm.description,
+                action: fm.typicalRepair,
+                sensors: Object.keys(fm.confidenceWeights),
+                snapshot: snapshot
+            };
+            activeAlerts.unshift(alert);
+            alertCooldowns[fm.id] = tickCount;
+            renderAlert(alert);
+            updateAlertStatus();
+            log(`ALERT: ${fm.name} (${Math.round(confidence*100)}% confidence)`, "error");
+        }
+    }
+}
+
+function renderAlert(alert) {
+    const container = document.getElementById("alertsContainer");
+    if (container.querySelector(".empty-state")) container.innerHTML = "";
+    const div = document.createElement("div");
+    div.className = `alert-item ${alert.severity}`;
+    div.innerHTML = `
+        <div class="alert-header">
+            <div class="alert-title">${alert.failureName}</div>
+            <div class="alert-confidence ${alert.confidence >= 70 ? 'high' : alert.confidence >= 45 ? 'medium' : 'low'}">${alert.confidence}%</div>
+        </div>
+        <div class="alert-desc">${alert.description.substring(0, 120)}...</div>
+        <div class="alert-action">${alert.action.substring(0, 100)}...</div>
+        <div class="alert-meta">
+            <span>${alert.timestamp}</span>
+            <span>${alert.sensors.slice(0,3).join(", ")}</span>
+        </div>
+    `;
+    container.insertBefore(div, container.firstChild);
+}
+
+// ===================== CHARTS =====================
+function initCharts() {
+    const layout = {
+        paper_bgcolor: "#0a0a0a", plot_bgcolor: "#0a0a0a",
+        font: { color: "#666", size: 10 },
+        margin: { t: 20, r: 20, b: 30, l: 40 },
+        xaxis: { showgrid: false, zeroline: false, showticklabels: false },
+        yaxis: { showgrid: true, gridcolor: "#1a1a1a", zeroline: false },
+        showlegend: false
+    };
+    const config = { displayModeBar: false, responsive: true };
+    Plotly.newPlot("chartTemp", [{ x: [], y: [], mode: "lines", line: { color: "#f44336", width: 1.5 } }], { ...layout, title: { text: "Coolant Temp (C)", font: { size: 11, color: "#888" } } }, config);
+    Plotly.newPlot("chartVoltage", [{ x: [], y: [], mode: "lines", line: { color: "#ff9800", width: 1.5 } }], { ...layout, title: { text: "Voltage (V)", font: { size: 11, color: "#888" } } }, config);
+    Plotly.newPlot("chartRPM", [{ x: [], y: [], mode: "lines", line: { color: "#2196f3", width: 1.5 } }], { ...layout, title: { text: "RPM", font: { size: 11, color: "#888" } } }, config);
+    Plotly.newPlot("chartMAP", [{ x: [], y: [], mode: "lines", line: { color: "#4caf50", width: 1.5 } }], { ...layout, title: { text: "MAP (kPa)", font: { size: 11, color: "#888" } } }, config);
+}
+
+function updateCharts() {
+    const update = (id, data) => {
+        if (data && data.length > 0) Plotly.update(id, { x: [data.map(d => d.x)], y: [data.map(d => d.y)] });
+    };
+    update("chartTemp", sensorHistory["COOLANT_TEMP"]);
+    update("chartVoltage", sensorHistory["CONTROL_MODULE_VOLTAGE"]);
+    update("chartRPM", sensorHistory["RPM"]);
+    update("chartMAP", sensorHistory["MAP"]);
+}
+
+window.addEventListener("DOMContentLoaded", init);
+</script>
+</body>
+</html>
